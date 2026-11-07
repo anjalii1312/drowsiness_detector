@@ -3,3 +3,4 @@ __pycache__/
 *.h5
 *.p 
 data/
+face_landmarker.task
