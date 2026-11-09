@@ -11,8 +11,10 @@ Press 'q' to quit.
 """
 
 import os               # to check if the model file already exists
+import threading        # to play the alarm without freezing the video
 import time             # to give MediaPipe a timestamp for each frame
 import urllib.request   # to download the model file the first time
+import winsound         # to play the alarm beep (Windows only)
 
 import cv2              # OpenCV: webcam, drawing, showing the window
 import mediapipe as mp  # MediaPipe: finds the face landmarks
@@ -24,6 +26,8 @@ from mediapipe.tasks.python import BaseOptions, vision
 # ---------------------------------------------------------------------------
 EAR_THRESHOLD = 0.21   # if EAR goes below this, the eye counts as "closed"
 DROWSY_SECONDS = 2     # eyes closed longer than this many seconds = drowsy
+ALARM_FREQUENCY = 1000 # pitch of the alarm beep in Hz
+ALARM_DURATION = 400   # length of each beep in milliseconds
 CAMERA_INDEX = 0       # 0 = default webcam; try 1 if you have more than one
 
 # The face landmark model file. MediaPipe needs it to find the face points.
@@ -47,6 +51,17 @@ def download_model_if_needed():
         print("Downloading face landmark model (one time only)...")
         urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
         print("Done.")
+
+
+def alarm_loop(alarm_on):
+    """
+    Runs in its own thread. Sleeps until alarm_on is set, then beeps over and
+    over until it is cleared. winsound.Beep() blocks, which is why this must
+    not run in the main (video) thread.
+    """
+    while True:
+        alarm_on.wait()  # sleep here until the alarm is switched on
+        winsound.Beep(ALARM_FREQUENCY, ALARM_DURATION)
 
 
 def eye_aspect_ratio(eye_points):
@@ -101,6 +116,11 @@ def main():
 
     # When the eyes first closed (None = eyes are currently open).
     closed_since = None
+
+    # Start ONE alarm thread. alarm_on is the on/off flag for the alarm:
+    # set() = beeping, clear() = silent. Only this one thread ever beeps.
+    alarm_on = threading.Event()
+    threading.Thread(target=alarm_loop, args=(alarm_on,), daemon=True).start()
 
     while True:
         # 1. Read one frame from the webcam.
@@ -157,12 +177,18 @@ def main():
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
 
             # Closed longer than DROWSY_SECONDS = drowsy (blinks are too short).
+            # Drowsy: show the text and turn the alarm on. Otherwise turn it off.
             if closed_time > DROWSY_SECONDS:
+                alarm_on.set()
                 cv2.putText(frame, "DROWSY!", (20, 150),
                             cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 255), 5)
+            else:
+                alarm_on.clear()
         else:
-            # No face: we can't tell if the eyes are closed, so reset the timer.
+            # No face: we can't tell if the eyes are closed, so reset the
+            # timer and stop the alarm.
             closed_since = None
+            alarm_on.clear()
             cv2.putText(frame, "No face found", (20, 40),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
 
@@ -173,7 +199,8 @@ def main():
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
 
-    # Clean up: release the webcam, close the window and the landmarker.
+    # Clean up: stop the alarm, release the webcam, close the window and the landmarker.
+    alarm_on.clear()
     camera.release()
     cv2.destroyAllWindows()
     landmarker.close()
