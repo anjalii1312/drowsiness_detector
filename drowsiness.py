@@ -23,7 +23,7 @@ from mediapipe.tasks.python import BaseOptions, vision
 # SETTINGS (change these to tune the detector)
 # ---------------------------------------------------------------------------
 EAR_THRESHOLD = 0.21   # if EAR goes below this, the eye counts as "closed"
-DROWSY_SECONDS = 1.5   # eyes closed this long = drowsy (used in a later step)
+DROWSY_SECONDS = 2     # eyes closed longer than this many seconds = drowsy
 CAMERA_INDEX = 0       # 0 = default webcam; try 1 if you have more than one
 
 # The face landmark model file. MediaPipe needs it to find the face points.
@@ -99,6 +99,9 @@ def main():
 
     start_time = time.time()
 
+    # When the eyes first closed (None = eyes are currently open).
+    closed_since = None
+
     while True:
         # 1. Read one frame from the webcam.
         success, frame = camera.read()
@@ -139,14 +142,34 @@ def main():
             color = (0, 0, 255) if ear < EAR_THRESHOLD else (0, 255, 0)
             cv2.putText(frame, f"EAR: {ear:.2f}", (20, 40),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
+
+            # 7. Track how long the eyes have been continuously closed.
+            if ear < EAR_THRESHOLD:
+                if closed_since is None:
+                    closed_since = time.time()  # eyes just closed: start timer
+                closed_time = time.time() - closed_since
+            else:
+                closed_since = None             # eyes open: reset the timer
+                closed_time = 0.0
+
+            # Show the closed-eye time so you can check that it works.
+            cv2.putText(frame, f"Closed: {closed_time:.1f}s", (20, 80),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+
+            # Closed longer than DROWSY_SECONDS = drowsy (blinks are too short).
+            if closed_time > DROWSY_SECONDS:
+                cv2.putText(frame, "DROWSY!", (20, 150),
+                            cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 255), 5)
         else:
+            # No face: we can't tell if the eyes are closed, so reset the timer.
+            closed_since = None
             cv2.putText(frame, "No face found", (20, 40),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
 
-        # 7. Show the frame in a window.
+        # 8. Show the frame in a window.
         cv2.imshow("Drowsiness Detector (press q to quit)", frame)
 
-        # 8. Wait 1 ms for a key press; quit if it's 'q'.
+        # 9. Wait 1 ms for a key press; quit if it's 'q'.
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
 
